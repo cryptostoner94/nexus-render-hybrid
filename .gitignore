@@ -1,0 +1,5 @@
+.env
+.env.local
+*.sqlite
+__pycache__/
+.DS_Store

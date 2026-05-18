@@ -4,6 +4,7 @@ from pathlib import Path
 import datetime, sqlite3, requests
 
 APP = FastAPI(title="NEXUS Render Hybrid")
+AI = AIRouter()
 
 DATA = Path("/tmp/nexus_data")
 UPLOADS = DATA / "uploads"
@@ -77,3 +78,22 @@ def memory():
     rows = c.execute("SELECT kind,title,content,created_at FROM memory ORDER BY id DESC LIMIT 50").fetchall()
     c.close()
     return {"items":[{"kind":k,"title":t,"content":ct,"created_at":d} for k,t,ct,d in rows]}
+
+
+@APP.post("/api/cloud/chat")
+def cloud_chat(payload: dict):
+    prompt = payload.get("prompt", "").strip()
+    if not prompt:
+        return {"error": "Empty prompt"}
+    return AI.ask(prompt)
+
+@APP.get("/api/providers")
+def providers():
+    return {
+        "openai": bool(os.getenv("OPENAI_API_KEY", "").strip()),
+        "gemini": bool(os.getenv("GEMINI_API_KEY", "").strip()),
+        "groq": bool(os.getenv("GROQ_API_KEY", "").strip()),
+        "openrouter": bool(os.getenv("OPENROUTER_API_KEY", "").strip()),
+        "together": bool(os.getenv("TOGETHER_API_KEY", "").strip()),
+        "fireworks": bool(os.getenv("FIREWORKS_API_KEY", "").strip()),
+    }
