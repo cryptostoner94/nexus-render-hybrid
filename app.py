@@ -1,58 +1,205 @@
-from fastapi import FastAPI, UploadFile, File
-from fastapi.responses import HTMLResponse, JSONResponse
-from pathlib import Path
-import datetime, sqlite3, requests
+import os
+import requests
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
 
 APP = FastAPI(title="NEXUS Render Hybrid")
-AI = AIRouter()
 
-DATA = Path("/tmp/nexus_data")
-UPLOADS = DATA / "uploads"
-DATA.mkdir(exist_ok=True)
-UPLOADS.mkdir(exist_ok=True)
-DB = DATA / "memory.sqlite"
+CONNECTOR = {"url": ""}
 
-def db():
-    c = sqlite3.connect(DB)
-    c.execute("CREATE TABLE IF NOT EXISTS memory(id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, title TEXT, content TEXT, created_at TEXT)")
-    c.commit()
-    return c
+PROVIDER_ORDER = [
+    "openai",
+    "gemini",
+    "groq",
+    "openrouter",
+    "together",
+    "fireworks",
+]
 
-def remember(kind, title, content):
-    c = db()
-    c.execute("INSERT INTO memory(kind,title,content,created_at) VALUES(?,?,?,?)", (kind, title, content, datetime.datetime.utcnow().isoformat()))
-    c.commit()
-    c.close()
+def openai_compatible(provider, url, key, model, prompt):
+    r = requests.post(
+        url,
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are NEXUS Cloud AI. Be practical, direct, and do not claim you performed actions unless a tool actually did them."
+                },
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.3,
+        },
+        timeout=120,
+    )
+    r.raise_for_status()
+    data = r.json()
+    return {
+        "provider": provider,
+        "model": model,
+        "answer": data["choices"][0]["message"]["content"],
+    }
+
+def gemini_chat(prompt):
+    key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not key:
+        raise RuntimeError("GEMINI_API_KEY missing")
+    model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+    r = requests.post(
+        url,
+        json={"contents": [{"parts": [{"text": prompt}]}]},
+        timeout=120,
+    )
+    r.raise_for_status()
+    data = r.json()
+    return {
+        "provider": "gemini",
+        "model": model,
+        "answer": data["candidates"][0]["content"]["parts"][0]["text"],
+    }
+
+def cloud_fallback(prompt):
+    errors = []
+
+    for provider in PROVIDER_ORDER:
+        try:
+            if provider == "openai":
+                key = os.getenv("OPENAI_API_KEY", "").strip()
+                if not key:
+                    continue
+                return openai_compatible(
+                    "openai",
+                    "https://api.openai.com/v1/chat/completions",
+                    key,
+                    os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                    prompt,
+                )
+
+            if provider == "gemini":
+                if not os.getenv("GEMINI_API_KEY", "").strip():
+                    continue
+                return gemini_chat(prompt)
+
+            if provider == "groq":
+                key = os.getenv("GROQ_API_KEY", "").strip()
+                if not key:
+                    continue
+                return openai_compatible(
+                    "groq",
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    key,
+                    os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"),
+                    prompt,
+                )
+
+            if provider == "openrouter":
+                key = os.getenv("OPENROUTER_API_KEY", "").strip()
+                if not key:
+                    continue
+                return openai_compatible(
+                    "openrouter",
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    key,
+                    os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.1-8b-instruct:free"),
+                    prompt,
+                )
+
+            if provider == "together":
+                key = os.getenv("TOGETHER_API_KEY", "").strip()
+                if not key:
+                    continue
+                return openai_compatible(
+                    "together",
+                    "https://api.together.xyz/v1/chat/completions",
+                    key,
+                    os.getenv("TOGETHER_MODEL", "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"),
+                    prompt,
+                )
+
+            if provider == "fireworks":
+                key = os.getenv("FIREWORKS_API_KEY", "").strip()
+                if not key:
+                    continue
+                return openai_compatible(
+                    "fireworks",
+                    "https://api.fireworks.ai/inference/v1/chat/completions",
+                    key,
+                    os.getenv("FIREWORKS_MODEL", "accounts/fireworks/models/llama-v3p1-8b-instruct"),
+                    prompt,
+                )
+
+        except Exception as e:
+            errors.append(f"{provider}: {str(e)}")
+
+    return {
+        "provider": "none",
+        "answer": "No cloud fallback provider succeeded. Add or correct API keys in Render Environment Variables.",
+        "errors": errors,
+    }
 
 @APP.get("/")
 def home():
     return HTMLResponse("""
-    <html>
-    <head><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-    <body style="background:#0b0d12;color:white;font-family:Arial;padding:30px;">
-    <h1>NEXUS Render Hybrid</h1>
-    <p>Status: Cloud runtime active.</p>
-    <p>Use Mac connector only when private Ollama/iCloud storage is needed.</p>
+<html>
+<head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NEXUS Render Hybrid</title>
+<style>
+body{background:#0b0d12;color:white;font-family:Arial;padding:24px}
+textarea,input,button{width:100%;padding:12px;margin:8px 0;font-size:16px;border-radius:10px}
+button{background:#4f7cff;color:white;border:0}
+pre{background:#111827;padding:12px;border-radius:10px;white-space:pre-wrap}
+.card{background:#151925;border:1px solid #2b3040;border-radius:14px;padding:14px;margin:14px 0}
+</style>
+</head>
+<body>
+<h1>NEXUS Render Hybrid</h1>
+<p>Static cloud dashboard. Mac connector auto-registers when turned ON.</p>
 
-    <h3>Mac Connector URL</h3>
-    <input id="mac" style="width:100%;padding:12px;" placeholder="https://xxxx.trycloudflare.com">
+<div class="card">
+<h3>Connector Status</h3>
+<button onclick="status()">Check Connector Status</button>
+<pre id="status"></pre>
+</div>
 
-    <h3>Ask Private Mac Ollama</h3>
-    <textarea id="prompt" style="width:100%;height:120px;padding:12px;"></textarea>
-    <button onclick="ask()">Ask Mac</button>
-    <pre id="out"></pre>
+<div class="card">
+<h3>AI Task</h3>
+<textarea id="prompt" rows="8" placeholder="Ask your task here..."></textarea>
+<button onclick="ask()">Run AI</button>
+<pre id="out"></pre>
+</div>
 
-    <script>
-    async function ask(){
-      const mac_url=document.getElementById('mac').value;
-      const prompt=document.getElementById('prompt').value;
-      const r=await fetch('/api/mac/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mac_url,prompt})});
-      document.getElementById('out').textContent=JSON.stringify(await r.json(),null,2);
-    }
-    </script>
-    </body>
-    </html>
-    """)
+<div class="card">
+<h3>Provider Status</h3>
+<button onclick="providers()">Check Providers</button>
+<pre id="providers"></pre>
+</div>
+
+<script>
+async function status(){
+ const r=await fetch('/api/connector/status');
+ document.getElementById('status').textContent=JSON.stringify(await r.json(),null,2);
+}
+async function ask(){
+ const prompt=document.getElementById('prompt').value;
+ const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt})});
+ document.getElementById('out').textContent=JSON.stringify(await r.json(),null,2);
+}
+async function providers(){
+ const r=await fetch('/api/providers');
+ document.getElementById('providers').textContent=JSON.stringify(await r.json(),null,2);
+}
+status();
+providers();
+</script>
+</body>
+</html>
+""")
 
 @APP.get("/health")
 def health():
@@ -61,31 +208,6 @@ def health():
 @APP.get("/api/health")
 def api_health():
     return {"ok": True, "service": "nexus-render-hybrid"}
-
-@APP.post("/api/mac/chat")
-def mac_chat(payload: dict):
-    mac_url = payload.get("mac_url", "").rstrip("/")
-    prompt = payload.get("prompt", "")
-    if not mac_url:
-        return {"error": "Mac connector is OFF. Start it only when needed."}
-    r = requests.post(mac_url + "/api/chat", json={"prompt": prompt}, timeout=240)
-    remember("mac-chat", prompt[:80], r.text[:4000])
-    return r.json()
-
-@APP.get("/api/memory")
-def memory():
-    c = db()
-    rows = c.execute("SELECT kind,title,content,created_at FROM memory ORDER BY id DESC LIMIT 50").fetchall()
-    c.close()
-    return {"items":[{"kind":k,"title":t,"content":ct,"created_at":d} for k,t,ct,d in rows]}
-
-
-@APP.post("/api/cloud/chat")
-def cloud_chat(payload: dict):
-    prompt = payload.get("prompt", "").strip()
-    if not prompt:
-        return {"error": "Empty prompt"}
-    return AI.ask(prompt)
 
 @APP.get("/api/providers")
 def providers():
@@ -96,4 +218,56 @@ def providers():
         "openrouter": bool(os.getenv("OPENROUTER_API_KEY", "").strip()),
         "together": bool(os.getenv("TOGETHER_API_KEY", "").strip()),
         "fireworks": bool(os.getenv("FIREWORKS_API_KEY", "").strip()),
+    }
+
+@APP.post("/api/connector/register")
+def register_connector(payload: dict):
+    url = payload.get("url", "").strip().rstrip("/")
+    if not url.startswith("https://"):
+        return {"ok": False, "error": "Invalid connector URL"}
+    CONNECTOR["url"] = url
+    return {"ok": True, "registered_url": CONNECTOR["url"]}
+
+@APP.post("/api/connector/clear")
+def clear_connector():
+    CONNECTOR["url"] = ""
+    return {"ok": True, "message": "Connector cleared"}
+
+@APP.get("/api/connector/status")
+def connector_status():
+    return {
+        "registered": bool(CONNECTOR["url"]),
+        "url": CONNECTOR["url"] if CONNECTOR["url"] else None,
+    }
+
+@APP.post("/api/chat")
+def chat(payload: dict):
+    prompt = payload.get("prompt", "").strip()
+    if not prompt:
+        return {"error": "Empty prompt"}
+
+    if CONNECTOR["url"]:
+        try:
+            r = requests.post(
+                CONNECTOR["url"] + "/api/chat",
+                json={"prompt": prompt},
+                timeout=240,
+            )
+            return {
+                "mode": "mac-ollama",
+                "connector": "auto-registered",
+                "result": r.json(),
+            }
+        except Exception as e:
+            CONNECTOR["url"] = ""
+            fallback = cloud_fallback(prompt)
+            return {
+                "mode": "mac-connector-failed-cloud-fallback-used",
+                "connector_error": str(e),
+                "result": fallback,
+            }
+
+    return {
+        "mode": "cloud-fallback",
+        "result": cloud_fallback(prompt),
     }
