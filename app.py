@@ -102,13 +102,20 @@ def providers():
 
 def openai_compatible(provider,url,key,model,prompt):
     log_event(f"Attempting {provider} with model {model}")
-    r=requests.post(url,headers={"Authorization":f"Bearer {key}","Content-Type":"application/json"},json={
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://nexus-render-hybrid.onrender.com",
+        "X-Title": "Nexus Render Hybrid"
+    }
+    payload = {
         "model":model,
         "messages":[
             {"role":"system","content":"You are Nexus Render Hybrid: a practical autonomous agent. Be precise, useful, and never claim external actions unless completed."},
             {"role":"user","content":prompt}
         ]
-    },timeout=120)
+    }
+    r=requests.post(url, headers=headers, json=payload, timeout=120)
     r.raise_for_status()
     data=r.json()
     log_event(f"Success: {provider} responded.")
@@ -117,7 +124,12 @@ def openai_compatible(provider,url,key,model,prompt):
 def gemini(prompt):
     log_event("Attempting Gemini...")
     key=os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    model=os.getenv("GEMINI_MODEL","gemini-1.5-flash")
+    model=os.getenv("GEMINI_MODEL", "").strip()
+    
+    # Sanity check: Ensure model is valid and not truncated to 'gemini-'
+    if not model or model == "gemini-":
+        model = "gemini-1.5-flash"
+        
     r=requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}",json={
         "contents":[{"parts":[{"text":prompt}]}]
     },timeout=120)

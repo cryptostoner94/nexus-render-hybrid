@@ -50,10 +50,10 @@ async def chat(
     try:
 
         r = requests.post(
-            "http://127.0.0.1:11434/api/generate",
+            "http://127.0.0.1:11434/api/chat",
             json={
                 "model": OLLAMA_MODEL,
-                "prompt": prompt,
+                "messages": [{"role": "user", "content": prompt}],
                 "stream": False
             },
             timeout=240
@@ -62,7 +62,7 @@ async def chat(
         data = r.json()
         return {
             "model": OLLAMA_MODEL,
-            "answer": data.get("response", "")
+            "answer": data.get("message", {}).get("content", "")
         }
 
     except Exception as e:
