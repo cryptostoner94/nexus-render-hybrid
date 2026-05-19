@@ -7,7 +7,7 @@ APP = FastAPI()
 
 SECRET = os.getenv(
     "MAC_CONNECTOR_SECRET",
-    "change-this-secret"
+    ""
 )
 
 OLLAMA_MODEL = os.getenv(
@@ -17,10 +17,16 @@ OLLAMA_MODEL = os.getenv(
 
 @APP.get("/health")
 async def health():
+    try:
+        requests.get("http://127.0.0.1:11434/api/tags", timeout=2)
+        ollama = "online"
+    except:
+        ollama = "offline"
     return {
         "ok": True,
         "service": "mac-connector",
-        "model": OLLAMA_MODEL
+        "model": OLLAMA_MODEL,
+        "ollama": ollama
     }
 
 @APP.post("/api/chat")
@@ -29,13 +35,13 @@ async def chat(
     x_connector_secret: str = Header(default="")
 ):
 
-    if x_connector_secret != SECRET:
+    if SECRET and x_connector_secret != SECRET:
 
         return JSONResponse(
             status_code=401,
             content={
                 "ok": False,
-                "error": "Unauthorized"
+                "error": "Unauthorized: x-connector-secret header invalid or missing."
             }
         )
 
@@ -53,7 +59,11 @@ async def chat(
             timeout=240
         )
 
-        return r.json()
+        data = r.json()
+        return {
+            "model": OLLAMA_MODEL,
+            "answer": data.get("response", "")
+        }
 
     except Exception as e:
 
