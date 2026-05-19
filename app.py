@@ -3,9 +3,9 @@ import requests
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
-APP = FastAPI(title="Agentflow Relay", version="11.1.0")
+APP = FastAPI(title="Nexus Render Hybrid", version="11.2.0")
 
-def has(name):
+def active(name):
     return bool(os.getenv(name, "").strip())
 
 @APP.get("/")
@@ -14,7 +14,7 @@ def home():
 <html>
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Agentflow Relay</title>
+<title>Nexus Render Hybrid</title>
 <style>
 body{font-family:Arial;background:#0b0d12;color:white;padding:24px}
 .card{background:#151925;border:1px solid #2b3040;border-radius:14px;padding:16px;margin:14px 0}
@@ -24,7 +24,7 @@ pre{white-space:pre-wrap;background:#090b10;padding:12px;border-radius:10px}
 </style>
 </head>
 <body>
-<h1>Agentflow Relay</h1>
+<h1>Nexus Render Hybrid</h1>
 <div class="card">
 <h3>Provider Status</h3>
 <button onclick="providers()">Check Providers</button>
@@ -54,7 +54,7 @@ providers();
 
 @APP.get("/health")
 def health():
-    return {"ok": True, "service": "agentflow-relay", "version": "11.1.0"}
+    return {"ok": True, "service": "nexus-render-hybrid", "version": "11.2.0"}
 
 @APP.get("/api/health")
 def api_health():
@@ -63,20 +63,14 @@ def api_health():
 @APP.get("/api/providers")
 def providers():
     return {
-        "gemini": has("GEMINI_API_KEY") or has("GOOGLE_API_KEY"),
-        "groq": has("GROQ_API_KEY"),
-        "openrouter": has("OPENROUTER_API_KEY"),
-        "together": has("TOGETHER_API_KEY"),
-        "fireworks": has("FIREWORKS_API_KEY"),
-        "mac_connector": has("MAC_CONNECTOR_URL"),
-        "mac_connector_secret": has("MAC_CONNECTOR_SECRET"),
+        "gemini": active("GEMINI_API_KEY") or active("GOOGLE_API_KEY"),
+        "groq": active("GROQ_API_KEY"),
+        "openrouter": active("OPENROUTER_API_KEY"),
+        "together": active("TOGETHER_API_KEY"),
+        "fireworks": active("FIREWORKS_API_KEY"),
+        "mac_connector": active("MAC_CONNECTOR_URL"),
+        "mac_connector_secret": active("MAC_CONNECTOR_SECRET"),
         "openai_disabled": True
-    }
-
-def cloud_fallback(prompt):
-    return {
-        "provider": "cloud-fallback",
-        "answer": "Provider route is installed. Add/verify API keys in Render and redeploy. Use /api/providers to confirm active providers."
     }
 
 @APP.post("/api/chat")
@@ -98,6 +92,6 @@ def chat(payload: dict):
             )
             return {"mode": "mac-connector", "result": r.json()}
         except Exception as e:
-            return {"mode": "mac-failed", "error": str(e), "fallback": cloud_fallback(prompt)}
+            return {"mode": "mac-failed", "error": str(e)}
 
-    return {"mode": "cloud", "result": cloud_fallback(prompt)}
+    return {"mode": "cloud", "message": "Cloud route active. Check /api/providers."}
